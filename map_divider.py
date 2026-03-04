@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
@@ -5,9 +6,9 @@ from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 from datetime import datetime
 
-# Функція отримання bounding box
-@st.cache_data(ttl=3600)
-def get_bounds(place_name):
+# Кешування геокодингу з довшим TTL та спіннером
+@st.cache_data(ttl="1d", show_spinner="Завантаження меж регіону...")
+def get_bounds(place_name: str) -> dict | None:
     geolocator = Nominatim(user_agent="map_divider_app")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1.1)
     try:
@@ -23,40 +24,28 @@ def get_bounds(place_name):
         st.error(f"Помилка геокодингу: {e}")
         return None
 
-# Початкові значення (fallback — Україна)
-DEFAULT_BOUNDS = {'min_lat': 44.38, 'max_lat': 52.38, 'min_lon': 22.14, 'max_lon': 40.23}
-
-if 'current_bounds' not in st.session_state:
-    st.session_state.current_bounds = DEFAULT_BOUNDS.copy()
-if 'level' not in st.session_state:
-    st.session_state.level = 0
-if 'place_name' not in st.session_state:
-    st.session_state.place_name = "Україна"
-
-st.title("Поділ карти з маркером центру та збереженням у файл")
-
-# Введення місця
-place = st.text_input("Країна, область, місто чи регіон:", value=st.session_state.place_name)
-
-if st.button("Завантажити межі") or (place != st.session_state.place_name and place.strip()):
-    if place.strip():
-        bounds = get_bounds(place)
-        if bounds:
-            st.session_state.current_bounds = bounds
-            st.session_state.place_name = place
-            st.session_state.level = 0
-            st.success(f"Завантажено: **{place}**")
-            st.rerun()
-        else:
-            st.warning("Межі не знайдено. Спробуйте: 'Київська область', 'Львів', 'New South Wales' тощо.")
-    else:
-        st.warning("Введіть назву місця.")
-
-# Функція створення карти
-def create_map(bounds):
+# Кешування створення Folium-карти (основна оптимізація)
+@st.cache_data(ttl="30m", hash_funcs={dict: lambda b: tuple(sorted(b.items()))}, show_spinner="Генерація карти...")
+def create_cached_map(bounds_dict: dict, tile_option: str) -> folium.Map:
+    bounds = bounds_dict
     center_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
     center_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles='OpenStreetMap')
+    m = folium.Map(location=[center_lat, center_lon], tiles=None)
+
+    # Вибір тайлів
+    if tile_option == "Google Maps (дороги)":
+        tiles_url = 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'
+        attr = 'Google'
+    elif tile_option == "Google Satellite":
+        tiles_url = 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
+        attr = 'Google'
+    else:
+        tiles_url = 'OpenStreetMap'
+        attr = '© OpenStreetMap contributors'
+
+    folium.TileLayer(tiles=tiles_url, attr=attr, name=tile_option).add_to(m)
+
+    m.fit_bounds([[bounds['min_lat'], bounds['min_lon']], [bounds['max_lat'], bounds['max_lon']]])
 
     folium.Rectangle(
         bounds=[[bounds['min_lat'], bounds['min_lon']], [bounds['max_lat'], bounds['max_lon']]],
@@ -69,7 +58,6 @@ def create_map(bounds):
     folium.PolyLine([[mid_lat, bounds['min_lon']], [mid_lat, bounds['max_lon']]], color="blue", dash_array="5").add_to(m)
     folium.PolyLine([[bounds['min_lat'], mid_lon], [bounds['max_lat'], mid_lon]], color="blue", dash_array="5").add_to(m)
 
-    # Підписи квадратів
     for label, pos in [
         ("1 NW", [(mid_lat + bounds['max_lat'])/2, (bounds['min_lon'] + mid_lon)/2]),
         ("2 NE", [(mid_lat + bounds['max_lat'])/2, (mid_lon + bounds['max_lon'])/2]),
@@ -81,7 +69,6 @@ def create_map(bounds):
             icon=folium.DivIcon(html=f'<div style="font-size:16pt;color:red;font-weight:bold;background:white;padding:4px;border-radius:4px;">{label}</div>')
         ).add_to(m)
 
-    # Маркер центру
     folium.Marker(
         [center_lat, center_lon],
         popup=f"Центр (рівень {st.session_state.level})<br>{center_lat:.6f}° N, {center_lon:.6f}° E",
@@ -100,8 +87,45 @@ def create_map(bounds):
 
     return m
 
-map_obj = create_map(st.session_state.current_bounds)
-st_folium(map_obj, width=900, height=600)
+# Початкові значення
+DEFAULT_BOUNDS = {'min_lat': 44.38, 'max_lat': 52.38, 'min_lon': 22.14, 'max_lon': 40.23}
+
+if 'current_bounds' not in st.session_state:
+    st.session_state.current_bounds = DEFAULT_BOUNDS.copy()
+if 'level' not in st.session_state:
+    st.session_state.level = 0
+if 'place_name' not in st.session_state:
+    st.session_state.place_name = "Україна"
+
+st.title("Оптимізований поділ карти з Google Maps")
+
+# Вибір типу карти
+tile_option = st.selectbox(
+    "Оберіть тип карти:",
+    ["Google Maps (дороги)", "Google Satellite", "OpenStreetMap (класичний)"],
+    key="tile_option"
+)
+
+# Введення місця
+place = st.text_input("Країна, область, місто чи регіон:", value=st.session_state.place_name)
+
+if st.button("Завантажити межі"):
+    if place.strip():
+        bounds = get_bounds(place)
+        if bounds:
+            st.session_state.current_bounds = bounds
+            st.session_state.place_name = place
+            st.session_state.level = 0
+            st.success(f"Завантажено: **{place}**")
+            st.rerun()
+        else:
+            st.warning("Межі не знайдено.")
+    else:
+        st.warning("Введіть назву місця.")
+
+# Відображення карти (кешовано)
+map_obj = create_cached_map(st.session_state.current_bounds, tile_option)
+st_folium(map_obj, width="100%", height=500, returned_objects=[])
 
 # Інформація
 bounds = st.session_state.current_bounds
@@ -112,37 +136,25 @@ st.subheader("Поточний центр")
 st.markdown(f"**{center_lat:.6f}° N   |   {center_lon:.6f}° E**")
 st.caption(f"Місце: {st.session_state.place_name}   |   Рівень: {st.session_state.level}")
 
-# Кнопки поділу
+# Форма для вибору квадрата (оптимізація: rerun тільки після submit)
 st.subheader("Оберіть квадрат")
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    if st.button("1 — Північний Захід"):
-        mid_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
-        mid_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
+with st.form("quadrant_form"):
+    quadrant = st.radio("Квадрат:", ["1 — Північний Захід", "2 — Північний Схід", "3 — Південний Захід", "4 — Південний Схід"], horizontal=True)
+    submitted = st.form_submit_button("Застосувати поділ")
+
+if submitted:
+    mid_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
+    mid_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
+    if "1" in quadrant:
         st.session_state.current_bounds = {'min_lat': mid_lat, 'max_lat': bounds['max_lat'], 'min_lon': bounds['min_lon'], 'max_lon': mid_lon}
-        st.session_state.level += 1
-        st.rerun()
-with col2:
-    if st.button("2 — Північний Схід"):
-        mid_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
-        mid_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
+    elif "2" in quadrant:
         st.session_state.current_bounds = {'min_lat': mid_lat, 'max_lat': bounds['max_lat'], 'min_lon': mid_lon, 'max_lon': bounds['max_lon']}
-        st.session_state.level += 1
-        st.rerun()
-with col3:
-    if st.button("3 — Південний Захід"):
-        mid_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
-        mid_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
+    elif "3" in quadrant:
         st.session_state.current_bounds = {'min_lat': bounds['min_lat'], 'max_lat': mid_lat, 'min_lon': bounds['min_lon'], 'max_lon': mid_lon}
-        st.session_state.level += 1
-        st.rerun()
-with col4:
-    if st.button("4 — Південний Схід"):
-        mid_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
-        mid_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
+    elif "4" in quadrant:
         st.session_state.current_bounds = {'min_lat': bounds['min_lat'], 'max_lat': mid_lat, 'min_lon': mid_lon, 'max_lon': bounds['max_lon']}
-        st.session_state.level += 1
-        st.rerun()
+    st.session_state.level += 1
+    st.rerun()
 
 # Збереження у файл
 if st.button("Зберегти координати у файл (center_coordinates.txt)"):
@@ -159,18 +171,16 @@ if st.button("Зберегти координати у файл (center_coordina
 
 """
     try:
-        with open("center_coordinates.txt", "a", encoding="utf-8") as f:  # "a" — додавання в кінець файлу
+        with open("center_coordinates.txt", "a", encoding="utf-8") as f:
             f.write(content + "-" * 60 + "\n\n")
-        st.success("Координати успішно збережено у файл **center_coordinates.txt** (додано в кінець файлу)")
-        st.info("Файл знаходиться в тій самій папці, де запущено програму (де Ви виконали `streamlit run ...`)")
+        st.success("Збережено у **center_coordinates.txt**")
     except Exception as e:
-        st.error(f"Не вдалося зберегти файл: {e}\nПеревірте права доступу до папки.")
+        st.error(f"Помилка збереження: {e}")
 
 # Скидання
 if st.button("Скинути все"):
     st.session_state.current_bounds = DEFAULT_BOUNDS.copy()
     st.session_state.level = 0
     st.session_state.place_name = "Україна"
-
     st.rerun()
-    st.set_page_config(page_title="Мій поділ карти", page_icon="🗺️")
+```
