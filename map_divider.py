@@ -11,18 +11,36 @@ from datetime import datetime
 def get_bounds(place_name: str) -> dict | None:
     geolocator = Nominatim(user_agent="map_divider_app")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1.1)
-    try:
-        location = geocode(place_name)
-        if location and location.raw.get('boundingbox'):
-            bb = location.raw['boundingbox']
-            min_lat, max_lat, min_lon, max_lon = map(float, bb)
-            if min_lat > max_lat: min_lat, max_lat = max_lat, min_lat
-            if min_lon > max_lon: min_lon, max_lon = max_lon, min_lon
-            return {'min_lat': min_lat, 'max_lat': max_lat, 'min_lon': min_lon, 'max_lon': max_lon}
-        return None
-    except Exception as e:
-        st.error(f"Помилка геокодингу: {e}")
-        return None
+    
+    queries = [
+        place_name,                          # оригінал
+        f"{place_name}, Україна",            # + країна
+        f"{place_name} Україна",             # без коми
+        f"{place_name}, Ukraine",            # англійською
+        f"{place_name} місто",               # + "місто"
+        f"м. {place_name}",                  # скорочення
+    ]
+    
+    for query in queries:
+        try:
+            location = geocode(query)
+            if location and location.raw.get('boundingbox'):
+                bb = location.raw['boundingbox']
+                min_lat, max_lat, min_lon, max_lon = map(float, bb)
+                if min_lat > max_lat:
+                    min_lat, max_lat = max_lat, min_lat
+                if min_lon > max_lon:
+                    min_lon, max_lon = max_lon, min_lon
+                return {
+                    'min_lat': min_lat,
+                    'max_lat': max_lat,
+                    'min_lon': min_lon,
+                    'max_lon': max_lon
+                }
+        except Exception:
+            continue  # просто пропускаємо помилку і пробуємо наступний запит
+    
+    return None
 
 # Кешування створення Folium-карти (основна оптимізація)
 @st.cache_data(ttl="30m", hash_funcs={dict: lambda b: tuple(sorted(b.items()))}, show_spinner="Генерація карти...")
@@ -183,5 +201,6 @@ if st.button("Скинути все"):
     st.session_state.level = 0
     st.session_state.place_name = "Україна"
     st.rerun()
+
 
 
