@@ -33,24 +33,7 @@ if 'level' not in st.session_state:
 if 'place_name' not in st.session_state:
     st.session_state.place_name = "Україна"
 
-st.title("Поділ карти з Google Maps інтеграцією")
-
-# Вибір типу базової карти
-tile_option = st.selectbox(
-    "Оберіть тип карти:",
-    ["Google Maps (дороги)", "Google Satellite", "OpenStreetMap (класичний)"]
-)
-
-# Визначення tiles та атрибуції
-if tile_option == "Google Maps (дороги)":
-    tiles_url = 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'
-    attr = 'Google'
-elif tile_option == "Google Satellite":
-    tiles_url = 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
-    attr = 'Google'
-else:
-    tiles_url = 'OpenStreetMap'
-    attr = '© OpenStreetMap contributors'
+st.title("Поділ карти з маркером центру та збереженням у файл")
 
 # Введення місця
 place = st.text_input("Країна, область, місто чи регіон:", value=st.session_state.place_name)
@@ -73,21 +56,11 @@ if st.button("Завантажити межі") or (place != st.session_state.pl
 def create_map(bounds):
     center_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
     center_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
-    m = folium.Map(location=[center_lat, center_lon], tiles=None)  # Без дефолтних tiles
+    m = folium.Map(location=[center_lat, center_lon], tiles='OpenStreetMap')
 
-    # Додаємо обраний шар
-    folium.TileLayer(
-        tiles=tiles_url,
-        attr=attr,
-        name=tile_option,
-        overlay=False,
-        control=True
-    ).add_to(m)
-
-    # Автоматичний зум на поточну область
+    # Автоматичний зум на поточні межі, щоб квадрат займав увесь екран
     m.fit_bounds([[bounds['min_lat'], bounds['min_lon']], [bounds['max_lat'], bounds['max_lon']]])
 
-    # Прямокутник поточного квадрата
     folium.Rectangle(
         bounds=[[bounds['min_lat'], bounds['min_lon']], [bounds['max_lat'], bounds['max_lon']]],
         color="black", weight=3, fill=False
@@ -96,11 +69,10 @@ def create_map(bounds):
     mid_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
     mid_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
 
-    # Лінії поділу
     folium.PolyLine([[mid_lat, bounds['min_lon']], [mid_lat, bounds['max_lon']]], color="blue", dash_array="5").add_to(m)
     folium.PolyLine([[bounds['min_lat'], mid_lon], [bounds['max_lat'], mid_lon]], color="blue", dash_array="5").add_to(m)
 
-    # Підписи 1–4
+    # Підписи квадратів
     for label, pos in [
         ("1 NW", [(mid_lat + bounds['max_lat'])/2, (bounds['min_lon'] + mid_lon)/2]),
         ("2 NE", [(mid_lat + bounds['max_lat'])/2, (mid_lon + bounds['max_lon'])/2]),
@@ -143,7 +115,7 @@ st.subheader("Поточний центр")
 st.markdown(f"**{center_lat:.6f}° N   |   {center_lon:.6f}° E**")
 st.caption(f"Місце: {st.session_state.place_name}   |   Рівень: {st.session_state.level}")
 
-# Кнопки поділу (залишаються без змін)
+# Кнопки поділу
 st.subheader("Оберіть квадрат")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -175,7 +147,7 @@ with col4:
         st.session_state.level += 1
         st.rerun()
 
-# Збереження у файл (без змін)
+# Збереження у файл
 if st.button("Зберегти координати у файл (center_coordinates.txt)"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     content = f"""Збережено: {timestamp}
@@ -192,9 +164,10 @@ if st.button("Зберегти координати у файл (center_coordina
     try:
         with open("center_coordinates.txt", "a", encoding="utf-8") as f:
             f.write(content + "-" * 60 + "\n\n")
-        st.success("Збережено у **center_coordinates.txt**")
+        st.success("Координати успішно збережено у файл **center_coordinates.txt** (додано в кінець файлу)")
+        st.info("Файл знаходиться в тій самій папці, де запущено програму")
     except Exception as e:
-        st.error(f"Помилка збереження: {e}")
+        st.error(f"Не вдалося зберегти файл: {e}\nПеревірте права доступу до папки.")
 
 # Скидання
 if st.button("Скинути все"):
