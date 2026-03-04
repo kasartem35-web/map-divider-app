@@ -171,4 +171,6 @@ if st.button("Скинути все"):
     st.session_state.current_bounds = DEFAULT_BOUNDS.copy()
     st.session_state.level = 0
     st.session_state.place_name = "Україна"
+
     st.rerun()
+    st.set_page_config(page_title="Мій поділ карти", page_icon="🗺️")
