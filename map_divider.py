@@ -1,4 +1,4 @@
-```python
+
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
@@ -183,4 +183,5 @@ if st.button("Скинути все"):
     st.session_state.level = 0
     st.session_state.place_name = "Україна"
     st.rerun()
-```
+
+
